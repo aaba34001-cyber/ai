@@ -142,27 +142,8 @@ async function handleAsk(ctx, question) {
   }
   busy.add(key);
 
-  const chatId = ctx.chat.id;
-  const editEvery = isPrivate(ctx) ? 1200 : 3000;
   let waitMsg = null;
   let typingTimer = null;
-  let latest = '';
-  let lastEdit = 0;
-  let finished = false;
-  let inflight = Promise.resolve();
-
-  const pushPartial = () => {
-    if (finished || !waitMsg) return;
-    const now = Date.now();
-    if (now - lastEdit < editEvery) return;
-    const shown = latest.slice(0, 3900);
-    if (!shown) return;
-    lastEdit = now;
-    const msgId = waitMsg.message_id;
-    inflight = inflight
-      .then(() => ctx.telegram.editMessageText(chatId, msgId, undefined, `${shown} ▌`))
-      .catch(() => {});
-  };
 
   try {
     waitMsg = await ctx.reply('⏳ Javob tayyorlanmoqda...', replyExtra(ctx));
@@ -171,31 +152,11 @@ async function handleAsk(ctx, question) {
 
     db.incrementMessages(ctx.from.id);
     const history = db.getHistory(key, config.HISTORY_LIMIT);
-    const answer = await askAI(history, question, (text) => {
-      latest = text;
-      pushPartial();
-    });
-    finished = true;
+    const answer = await askAI(history, question);
     db.addExchange(key, question, answer);
-    await inflight;
 
-    let delivered = false;
-    const chunks = splitText(answer);
-    if (chunks.length === 1) {
-      try {
-        await ctx.telegram.editMessageText(chatId, waitMsg.message_id, undefined, chunks[0]);
-        delivered = true;
-      } catch (e) {
-        logError('final-edit', e);
-      }
-    }
-    if (delivered) {
-      waitMsg = null;
-    } else {
-      await sendLong(ctx, answer, replyExtra(ctx));
-    }
+    await sendLong(ctx, answer, replyExtra(ctx));
   } catch (err) {
-    finished = true;
     logError('handleAsk', err);
     const msg =
       err instanceof AIError
@@ -206,7 +167,7 @@ async function handleAsk(ctx, question) {
     if (typingTimer) clearInterval(typingTimer);
     busy.delete(key);
     if (waitMsg) {
-      await safe(() => ctx.telegram.deleteMessage(chatId, waitMsg.message_id), 'delete-wait');
+      await safe(() => ctx.telegram.deleteMessage(ctx.chat.id, waitMsg.message_id), 'delete-wait');
     }
   }
 }
